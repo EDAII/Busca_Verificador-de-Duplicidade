@@ -112,6 +112,27 @@ class App(tk.Tk):
         scroll.pack(side="right", fill="y")
         self.txt_log.configure(yscrollcommand=scroll.set)
 
+        # Tabela visual
+        frm_tabela = ttk.LabelFrame(self, text="Arquivos processados")
+        frm_tabela.pack(fill="both", expand=True, padx=8, pady=6)
+
+        self.tree = ttk.Treeview(frm_tabela, columns=("nome", "tamanho", "status"), show="headings")
+        self.tree.heading("nome", text="Nome do Arquivo")
+        self.tree.heading("tamanho", text="Tamanho (bytes)")
+        self.tree.heading("status", text="Status")
+        self.tree.column("nome", width=300)
+        self.tree.column("tamanho", width=100, anchor="center")
+        self.tree.column("status", width=100, anchor="center")
+        self.tree.pack(fill="both", expand=True, side="left")
+
+        scroll_tree = ttk.Scrollbar(frm_tabela, command=self.tree.yview)
+        scroll_tree.pack(side="right", fill="y")
+        self.tree.configure(yscrollcommand=scroll_tree.set)
+
+        # Tags para cores
+        self.tree.tag_configure("copiado", background="#d4edda")    # verde claro
+        self.tree.tag_configure("duplicado", background="#f8d7da")  # vermelho claro
+
         # Rodapé
         footer = ttk.Label(self, text="Dica: escolha uma pasta de origem com muitos arquivos e uma de destino vazia.")
         footer.pack(fill="x", padx=8, pady=(0, 10))
@@ -193,46 +214,69 @@ class App(tk.Tk):
         processados = 0
 
         try:
+            # Lista todos os arquivos e seus tamanhos
+            arquivos_completos = []
             for pasta_atual, _, arquivos in os.walk(dir_origem):
                 for nome_arquivo in arquivos:
-                    if self.stop_flag.is_set():
-                        raise KeyboardInterrupt
-
-                    total_arquivos += 1
                     caminho_completo = os.path.join(pasta_atual, nome_arquivo)
-
                     try:
                         tamanho = os.path.getsize(caminho_completo)
+                        arquivos_completos.append((tamanho, caminho_completo))
+                    except Exception:
+                        pass
 
-                        existentes = tabela.buscar_por_tamanho(tamanho)
-                        duplicado = False
+        # Ordena por tamanho
+            arquivos_completos.sort(key=lambda x: x[0])
 
-                        if existentes:
-                            for arquivo_existente in existentes:
-                                if comparar_arquivos(caminho_completo, arquivo_existente):
-                                    self._log(f"ARQUIVO DUPLICADO: {nome_arquivo} (igual a {os.path.basename(arquivo_existente)})")
-                                    duplicatas += 1
-                                    duplicado = True
-                                    break
+            for tamanho, caminho_completo in arquivos_completos:
+                if self.stop_flag.is_set():
+                    raise KeyboardInterrupt
 
-                        if not duplicado:
-                            destino_final = os.path.join(dir_destino, nome_arquivo)
-                            contador = 1
-                            while os.path.exists(destino_final):
-                                nome, ext = os.path.splitext(nome_arquivo)
-                                destino_final = os.path.join(dir_destino, f"{nome}_{contador}{ext}")
-                                contador += 1
+                total_arquivos += 1
+                nome_arquivo = os.path.basename(caminho_completo)
+                duplicado = False
 
-                            shutil.copy2(caminho_completo, destino_final)
-                            tabela.inserir(tamanho, destino_final)
-                            arquivos_copiados += 1
-                            self._log(f"COPIADO: {nome_arquivo} ({tamanho} bytes)")
-                    except Exception as e:
-                        self._log(f"ERRO processando {nome_arquivo}: {e}")
+                existentes = tabela.buscar_por_tamanho(tamanho)
+                if existentes:
+                    for arquivo_existente in existentes:
+                        if comparar_arquivos(caminho_completo, arquivo_existente):
+                            self._log(f"ARQUIVO DUPLICADO: {nome_arquivo} (igual a {os.path.basename(arquivo_existente)})")
+                            duplicatas += 1
+                            duplicado = True
+                            break
 
-                    # Atualiza progresso
-                    processados += 1
-                    self._update_progress(processados)
+                if not duplicado:
+                    destino_final = os.path.join(dir_destino, nome_arquivo)
+                    contador = 1
+                    while os.path.exists(destino_final):
+                        nome, ext = os.path.splitext(nome_arquivo)
+                        destino_final = os.path.join(dir_destino, f"{nome}_{contador}{ext}")
+                        contador += 1
+
+                    shutil.copy2(caminho_completo, destino_final)
+                    tabela.inserir(tamanho, destino_final)
+                    arquivos_copiados += 1
+                    self._log(f"COPIADO: {nome_arquivo} ({tamanho} bytes)")
+
+                # Atualiza Treeview com cores
+                tag = "duplicado" if duplicado else "copiado"
+                status = "DUPLICADO" if duplicado else "COPIADO"
+                self.tree.insert("", "end", values=(nome_arquivo, tamanho, status), tags=(tag,))
+
+                # Atualiza progresso
+                processados += 1
+                self._update_progress(processados)
+
+            # Estatísticas extras
+            tamanhos_unicos = [len(lista) for lista in tabela.vetor if lista]
+            if tamanhos_unicos:
+                maior_arquivo = max(tamanhos_unicos)
+                menor_arquivo = min(tamanhos_unicos)
+                self._log(f"Maior arquivo único copiado: {maior_arquivo} bytes")
+                self._log(f"Menor arquivo único copiado: {menor_arquivo} bytes")
+
+            mesmo_tamanho_diferentes = sum(len(lista) - 1 for lista in tabela.vetor if len(lista) > 1)
+            self._log(f"Arquivos com mesmo tamanho mas conteúdo diferente: {mesmo_tamanho_diferentes}")
 
             self._log("=" * 60)
             self._log("RESULTADO:")
