@@ -3,27 +3,56 @@ import shutil
 import threading
 import queue
 import time
-import bisect
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-class TabelaBinaria:
-    """Mantém os arquivos ordenados por tamanho para busca binária"""
+class _NoBST:
+    def __init__(self, tamanho):
+        self.tamanho = tamanho
+        self.caminhos = []  # lista de caminhos com esse tamanho
+        self.esq = None
+        self.dir = None
+
+class ArvoreBinariaPorTamanho:
+    """BST simples por tamanho (sem balanceamento). Busca binária sem ordenar vetor/lista."""
     def __init__(self):
-        self.lista = []  # lista de tuplas (tamanho, caminho)
+        self.raiz = None
 
     def inserir(self, tamanho, caminho):
-        bisect.insort(self.lista, (tamanho, caminho))
+        if self.raiz is None:
+            self.raiz = _NoBST(tamanho)
+            self.raiz.caminhos.append(caminho)
+            return
+
+        atual = self.raiz
+        while True:
+            if tamanho == atual.tamanho:
+                atual.caminhos.append(caminho)
+                return
+            elif tamanho < atual.tamanho:
+                if atual.esq is None:
+                    atual.esq = _NoBST(tamanho)
+                    atual.esq.caminhos.append(caminho)
+                    return
+                atual = atual.esq
+            else:
+                if atual.dir is None:
+                    atual.dir = _NoBST(tamanho)
+                    atual.dir.caminhos.append(caminho)
+                    return
+                atual = atual.dir
 
     def buscar_por_tamanho(self, tamanho):
-        """Retorna todos arquivos que possuem o tamanho exato"""
-        # busca binária para encontrar a primeira ocorrência
-        i = bisect.bisect_left(self.lista, (tamanho, ""))
-        resultados = []
-        while i < len(self.lista) and self.lista[i][0] == tamanho:
-            resultados.append(self.lista[i][1])
-            i += 1
-        return resultados
+        atual = self.raiz
+        while atual is not None:
+            if tamanho == atual.tamanho:
+                return list(atual.caminhos)
+            elif tamanho < atual.tamanho:
+                atual = atual.esq
+            else:
+                atual = atual.dir
+        return []  # nada com esse tamanho
+
 
 def comparar_arquivos(arquivo1, arquivo2):
     """Compara dois arquivos byte a byte"""
@@ -41,10 +70,11 @@ def comparar_arquivos(arquivo1, arquivo2):
     except Exception:
         return False
 
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Verificador de duplicidade (Busca Binária)")
+        self.title("Verificador de duplicidade com busca binária")
         self.geometry("820x560")
         self.minsize(820, 560)
 
@@ -59,7 +89,11 @@ class App(tk.Tk):
         self._build_ui()
         self._poll_log_queue()
 
-    # ---------------------- UI ----------------------
+
+    def _ui(self, fn, *args, **kwargs):
+        self.after(0, lambda: fn(*args, **kwargs))
+
+  
     def _build_ui(self):
         pad = {"padx": 8, "pady": 6}
 
@@ -93,31 +127,15 @@ class App(tk.Tk):
 
         frm_log = ttk.LabelFrame(self, text="Saída / Log")
         frm_log.pack(fill="both", expand=True, **pad)
-        self.txt_log = tk.Text(frm_log, wrap="word", height=18, state="disabled")
+        self.txt_log = tk.Text(frm_log, wrap="word", height=22, state="disabled")
         self.txt_log.pack(side="left", fill="both", expand=True)
         scroll = ttk.Scrollbar(frm_log, command=self.txt_log.yview)
         scroll.pack(side="right", fill="y")
         self.txt_log.configure(yscrollcommand=scroll.set)
 
-        frm_tabela = ttk.LabelFrame(self, text="Arquivos processados")
-        frm_tabela.pack(fill="both", expand=True, padx=8, pady=6)
-        self.tree = ttk.Treeview(frm_tabela, columns=("nome", "tamanho", "status"), show="headings")
-        self.tree.heading("nome", text="Nome do Arquivo")
-        self.tree.heading("tamanho", text="Tamanho (bytes)")
-        self.tree.heading("status", text="Status")
-        self.tree.column("nome", width=300)
-        self.tree.column("tamanho", width=100, anchor="center")
-        self.tree.column("status", width=100, anchor="center")
-        self.tree.pack(fill="both", expand=True, side="left")
-        scroll_tree = ttk.Scrollbar(frm_tabela, command=self.tree.yview)
-        scroll_tree.pack(side="right", fill="y")
-        self.tree.configure(yscrollcommand=scroll_tree.set)
-        self.tree.tag_configure("copiado", background="#d4edda")
-        self.tree.tag_configure("duplicado", background="#f8d7da")
-
         ttk.Label(self, text="Dica: escolha uma pasta de origem com muitos arquivos e uma de destino vazia.").pack(fill="x", padx=8, pady=(0, 10))
 
-    # ---------------------- Escolher pastas ----------------------
+
     def _escolher_origem(self):
         caminho = filedialog.askdirectory(title="Selecione a pasta de origem")
         if caminho: self.dir_origem.set(caminho)
@@ -126,7 +144,7 @@ class App(tk.Tk):
         caminho = filedialog.askdirectory(title="Selecione a pasta de destino")
         if caminho: self.dir_destino.set(caminho)
 
-    # ---------------------- Controles ----------------------
+  
     def _iniciar(self):
         origem = self.dir_origem.get().strip()
         destino = self.dir_destino.get().strip()
@@ -178,9 +196,9 @@ class App(tk.Tk):
             except Exception as e:
                 messagebox.showerror("Erro", f"Não foi possível salvar o log:\n{e}")
 
-    # ---------------------- Worker ----------------------
+
     def _deduplicar_worker(self, dir_origem, dir_destino):
-        tabela = TabelaBinaria()
+        arvore = ArvoreBinariaPorTamanho()
         total_arquivos = 0
         arquivos_copiados = 0
         duplicatas = 0
@@ -189,62 +207,49 @@ class App(tk.Tk):
         start_time = time.time()
 
         try:
-            # Lista todos os arquivos e seus tamanhos
-            arquivos_completos = []
             for pasta_atual, _, arquivos in os.walk(dir_origem):
                 for nome_arquivo in arquivos:
+                    if self.stop_flag.is_set():
+                        raise KeyboardInterrupt
+
                     caminho_completo = os.path.join(pasta_atual, nome_arquivo)
                     try:
                         tamanho = os.path.getsize(caminho_completo)
-                        arquivos_completos.append((tamanho, caminho_completo))
                     except Exception:
-                        pass
+                        continue
 
-            arquivos_completos.sort(key=lambda x: x[0])  # Ordena por tamanho
+                    total_arquivos += 1
+                    duplicado = False
 
-            for tamanho, caminho_completo in arquivos_completos:
-                if self.stop_flag.is_set(): raise KeyboardInterrupt
+                    existentes = arvore.buscar_por_tamanho(tamanho)
+                    if existentes:
+                        for arquivo_existente in existentes:
+                            comparacoes += 1
+                            if comparar_arquivos(caminho_completo, arquivo_existente):
+                                self._log(f"ARQUIVO DUPLICADO: {nome_arquivo} (igual a {os.path.basename(arquivo_existente)})")
+                                duplicatas += 1
+                                duplicado = True
+                                break
 
-                total_arquivos += 1
-                nome_arquivo = os.path.basename(caminho_completo)
-                duplicado = False
+                    if not duplicado:
+                        destino_final = os.path.join(dir_destino, nome_arquivo)
+                        contador = 1
+                        while os.path.exists(destino_final):
+                            nome, ext = os.path.splitext(nome_arquivo)
+                            destino_final = os.path.join(dir_destino, f"{nome}_{contador}{ext}")
+                            contador += 1
 
-                existentes = tabela.buscar_por_tamanho(tamanho)
-                if existentes:
-                    for arquivo_existente in existentes:
-                        comparacoes += 1
-                        if comparar_arquivos(caminho_completo, arquivo_existente):
-                            self._log(f"ARQUIVO DUPLICADO: {nome_arquivo} (igual a {os.path.basename(arquivo_existente)})")
-                            duplicatas += 1
-                            duplicado = True
-                            break
+                        shutil.copy2(caminho_completo, destino_final)
+                        arvore.inserir(tamanho, destino_final)
+                        arquivos_copiados += 1
+                        self._log(f"COPIADO: {nome_arquivo} ({tamanho} bytes)")
 
-                if not duplicado:
-                    destino_final = os.path.join(dir_destino, nome_arquivo)
-                    contador = 1
-                    while os.path.exists(destino_final):
-                        nome, ext = os.path.splitext(nome_arquivo)
-                        destino_final = os.path.join(dir_destino, f"{nome}_{contador}{ext}")
-                        contador += 1
+                    processados += 1
+                    self._ui(self._update_progress, processados)
 
-                    shutil.copy2(caminho_completo, destino_final)
-                    tabela.inserir(tamanho, destino_final)
-                    arquivos_copiados += 1
-                    self._log(f"COPIADO: {nome_arquivo} ({tamanho} bytes)")
-
-                tag = "duplicado" if duplicado else "copiado"
-                status = "DUPLICADO" if duplicado else "COPIADO"
-                self.tree.insert("", "end", values=(nome_arquivo, tamanho, status), tags=(tag,))
-                processados += 1
-                self._update_progress(processados)
-
-            # Estatísticas
             end_time = time.time()
             duracao_total = end_time - start_time
             tempo_medio_comparacao = duracao_total / max(comparacoes, 1)
-
-            tamanhos_unicos = [len(t[1]) for t in tabela.lista if t]
-            mesmo_tamanho_diferentes = sum(1 for t in tabela.lista)  # simplificado
 
             self._log("="*60)
             self._log("RESULTADO:")
@@ -252,7 +257,8 @@ class App(tk.Tk):
             self._log(f"Arquivos únicos copiados: {arquivos_copiados}")
             self._log(f"Arquivos duplicados: {duplicatas}")
             self._log(f"Pasta destino: {dir_destino}")
-
+            self._log("")
+            self._log("DESEMPENHO:")
             self._log(f"Número total de comparações de arquivos: {comparacoes}")
             self._log(f"Tempo total: {duracao_total:.4f} segundos")
             self._log(f"Tempo médio por comparação: {tempo_medio_comparacao:.6f} segundos")
@@ -260,11 +266,11 @@ class App(tk.Tk):
         except KeyboardInterrupt:
             self._log("\nProcesso interrompido pelo usuário.")
         finally:
-            self.btn_start.config(state="normal")
-            self.btn_stop.config(state="disabled")
+            self._ui(self.btn_start.config, state="normal")
+            self._ui(self.btn_stop.config, state="disabled")
             self.worker_thread = None
 
-    # ---------------------- Auxiliares ----------------------
+
     def _contar_arquivos(self, raiz):
         total = 0
         for _, _, arquivos in os.walk(raiz):
@@ -297,7 +303,6 @@ class App(tk.Tk):
         self.txt_log.configure(state="normal")
         self.txt_log.delete("1.0", "end")
         self.txt_log.configure(state="disabled")
-
 
 if __name__ == "__main__":
     App().mainloop()
