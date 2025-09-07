@@ -14,7 +14,6 @@ class _NoBST:
         self.dir = None
 
 class ArvoreBinariaPorTamanho:
-    """BST simples por tamanho (sem balanceamento). Busca binária sem ordenar vetor/lista."""
     def __init__(self):
         self.raiz = None
 
@@ -55,7 +54,6 @@ class ArvoreBinariaPorTamanho:
 
 
 def comparar_arquivos(arquivo1, arquivo2):
-    """Compara dois arquivos byte a byte"""
     try:
         if os.path.getsize(arquivo1) != os.path.getsize(arquivo2):
             return False
