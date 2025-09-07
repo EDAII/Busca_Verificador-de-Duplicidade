@@ -1,27 +1,29 @@
 import os
 import shutil
-import time
 import threading
 import queue
+import time
+import bisect
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-class TabelaHash:
-    def __init__(self, tamanho=1000):
-        self.tamanho = tamanho
-        self.vetor = [[] for _ in range(tamanho)]
-
-    def funcao_hash(self, tamanho):
-        return tamanho % self.tamanho
+class TabelaBinaria:
+    """Mantém os arquivos ordenados por tamanho para busca binária"""
+    def __init__(self):
+        self.lista = []  # lista de tuplas (tamanho, caminho)
 
     def inserir(self, tamanho, caminho):
-        indice = self.funcao_hash(tamanho)
-        self.vetor[indice].append((tamanho, caminho))
+        bisect.insort(self.lista, (tamanho, caminho))
 
     def buscar_por_tamanho(self, tamanho):
-        indice = self.funcao_hash(tamanho)
-        return [caminho for tam, caminho in self.vetor[indice] if tam == tamanho]
-
+        """Retorna todos arquivos que possuem o tamanho exato"""
+        # busca binária para encontrar a primeira ocorrência
+        i = bisect.bisect_left(self.lista, (tamanho, ""))
+        resultados = []
+        while i < len(self.lista) and self.lista[i][0] == tamanho:
+            resultados.append(self.lista[i][1])
+            i += 1
+        return resultados
 
 def comparar_arquivos(arquivo1, arquivo2):
     """Compara dois arquivos byte a byte"""
@@ -42,7 +44,7 @@ def comparar_arquivos(arquivo1, arquivo2):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Verificador de duplicidade")
+        self.title("Verificador de duplicidade (Busca Binária)")
         self.geometry("820x560")
         self.minsize(820, 560)
 
@@ -57,66 +59,48 @@ class App(tk.Tk):
         self._build_ui()
         self._poll_log_queue()
 
+    # ---------------------- UI ----------------------
     def _build_ui(self):
         pad = {"padx": 8, "pady": 6}
 
         frm_top = ttk.LabelFrame(self, text="Pastas")
         frm_top.pack(fill="x", **pad)
 
-        # Origem
         ttk.Label(frm_top, text="Origem:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
-        ent_origem = ttk.Entry(frm_top, textvariable=self.dir_origem)
-        ent_origem.grid(row=0, column=1, sticky="ew", padx=6, pady=6)
-        btn_origem = ttk.Button(frm_top, text="Escolher…", command=self._escolher_origem)
-        btn_origem.grid(row=0, column=2, padx=6, pady=6)
+        ttk.Entry(frm_top, textvariable=self.dir_origem).grid(row=0, column=1, sticky="ew", padx=6, pady=6)
+        ttk.Button(frm_top, text="Escolher…", command=self._escolher_origem).grid(row=0, column=2, padx=6, pady=6)
 
-        # Destino
         ttk.Label(frm_top, text="Destino:").grid(row=1, column=0, sticky="w", padx=6, pady=6)
-        ent_destino = ttk.Entry(frm_top, textvariable=self.dir_destino)
-        ent_destino.grid(row=1, column=1, sticky="ew", padx=6, pady=6)
-        btn_destino = ttk.Button(frm_top, text="Escolher…", command=self._escolher_destino)
-        btn_destino.grid(row=1, column=2, padx=6, pady=6)
+        ttk.Entry(frm_top, textvariable=self.dir_destino).grid(row=1, column=1, sticky="ew", padx=6, pady=6)
+        ttk.Button(frm_top, text="Escolher…", command=self._escolher_destino).grid(row=1, column=2, padx=6, pady=6)
 
         frm_top.columnconfigure(1, weight=1)
 
-        # Controles
         frm_ctrl = ttk.Frame(self)
         frm_ctrl.pack(fill="x", **pad)
-
         self.btn_start = ttk.Button(frm_ctrl, text="Iniciar", command=self._iniciar)
         self.btn_start.pack(side="left", padx=6)
-
         self.btn_stop = ttk.Button(frm_ctrl, text="Parar", command=self._parar, state="disabled")
         self.btn_stop.pack(side="left")
+        ttk.Button(frm_ctrl, text="Salvar log…", command=self._salvar_log).pack(side="right")
 
-        self.btn_salvar_log = ttk.Button(frm_ctrl, text="Salvar log…", command=self._salvar_log)
-        self.btn_salvar_log.pack(side="right")
-
-        # Progresso
         frm_prog = ttk.Frame(self)
         frm_prog.pack(fill="x", **pad)
-
         self.lbl_prog = ttk.Label(frm_prog, text="Pronto.")
         self.lbl_prog.pack(side="left")
-
         self.progress = ttk.Progressbar(frm_prog, mode="determinate", maximum=100)
         self.progress.pack(side="right", fill="x", expand=True, padx=6)
 
-        # Log (Text + Scrollbar)
         frm_log = ttk.LabelFrame(self, text="Saída / Log")
         frm_log.pack(fill="both", expand=True, **pad)
-
         self.txt_log = tk.Text(frm_log, wrap="word", height=18, state="disabled")
         self.txt_log.pack(side="left", fill="both", expand=True)
-
         scroll = ttk.Scrollbar(frm_log, command=self.txt_log.yview)
         scroll.pack(side="right", fill="y")
         self.txt_log.configure(yscrollcommand=scroll.set)
 
-        # Tabela visual
         frm_tabela = ttk.LabelFrame(self, text="Arquivos processados")
         frm_tabela.pack(fill="both", expand=True, padx=8, pady=6)
-
         self.tree = ttk.Treeview(frm_tabela, columns=("nome", "tamanho", "status"), show="headings")
         self.tree.heading("nome", text="Nome do Arquivo")
         self.tree.heading("tamanho", text="Tamanho (bytes)")
@@ -125,34 +109,27 @@ class App(tk.Tk):
         self.tree.column("tamanho", width=100, anchor="center")
         self.tree.column("status", width=100, anchor="center")
         self.tree.pack(fill="both", expand=True, side="left")
-
         scroll_tree = ttk.Scrollbar(frm_tabela, command=self.tree.yview)
         scroll_tree.pack(side="right", fill="y")
         self.tree.configure(yscrollcommand=scroll_tree.set)
+        self.tree.tag_configure("copiado", background="#d4edda")
+        self.tree.tag_configure("duplicado", background="#f8d7da")
 
-        # Tags para cores
-        self.tree.tag_configure("copiado", background="#d4edda")    # verde claro
-        self.tree.tag_configure("duplicado", background="#f8d7da")  # vermelho claro
+        ttk.Label(self, text="Dica: escolha uma pasta de origem com muitos arquivos e uma de destino vazia.").pack(fill="x", padx=8, pady=(0, 10))
 
-        # Rodapé
-        footer = ttk.Label(self, text="Dica: escolha uma pasta de origem com muitos arquivos e uma de destino vazia.")
-        footer.pack(fill="x", padx=8, pady=(0, 10))
-
-
+    # ---------------------- Escolher pastas ----------------------
     def _escolher_origem(self):
         caminho = filedialog.askdirectory(title="Selecione a pasta de origem")
-        if caminho:
-            self.dir_origem.set(caminho)
+        if caminho: self.dir_origem.set(caminho)
 
     def _escolher_destino(self):
         caminho = filedialog.askdirectory(title="Selecione a pasta de destino")
-        if caminho:
-            self.dir_destino.set(caminho)
+        if caminho: self.dir_destino.set(caminho)
 
+    # ---------------------- Controles ----------------------
     def _iniciar(self):
         origem = self.dir_origem.get().strip()
         destino = self.dir_destino.get().strip()
-
         if not origem or not os.path.isdir(origem):
             messagebox.showerror("Erro", "Selecione uma pasta de origem válida.")
             return
@@ -164,21 +141,16 @@ class App(tk.Tk):
             return
 
         os.makedirs(destino, exist_ok=True)
-
-        # Reset estado
         self._clear_log()
         self.stop_flag.clear()
         self.btn_start.config(state="disabled")
         self.btn_stop.config(state="normal")
         self._log(f"Procurando arquivos em: {origem}")
         self._log("=" * 60)
-
-        # Conta arquivos para progress bar
         self.total_arquivos = self._contar_arquivos(origem)
         self.progress.configure(maximum=max(self.total_arquivos, 1), value=0)
         self.lbl_prog.config(text=f"0 / {self.total_arquivos} arquivos processados")
 
-        # Thread de trabalho
         self.worker_thread = threading.Thread(
             target=self._deduplicar_worker, args=(origem, destino), daemon=True
         )
@@ -206,17 +178,16 @@ class App(tk.Tk):
             except Exception as e:
                 messagebox.showerror("Erro", f"Não foi possível salvar o log:\n{e}")
 
-
+    # ---------------------- Worker ----------------------
     def _deduplicar_worker(self, dir_origem, dir_destino):
-        tabela = TabelaHash()
+        tabela = TabelaBinaria()
         total_arquivos = 0
         arquivos_copiados = 0
         duplicatas = 0
         processados = 0
-
-        import time
-        start_time = time.time()
         comparacoes = 0
+        start_time = time.time()
+
         try:
             # Lista todos os arquivos e seus tamanhos
             arquivos_completos = []
@@ -229,12 +200,10 @@ class App(tk.Tk):
                     except Exception:
                         pass
 
-        # Ordena por tamanho
-            arquivos_completos.sort(key=lambda x: x[0])
+            arquivos_completos.sort(key=lambda x: x[0])  # Ordena por tamanho
 
             for tamanho, caminho_completo in arquivos_completos:
-                if self.stop_flag.is_set():
-                    raise KeyboardInterrupt
+                if self.stop_flag.is_set(): raise KeyboardInterrupt
 
                 total_arquivos += 1
                 nome_arquivo = os.path.basename(caminho_completo)
@@ -263,43 +232,27 @@ class App(tk.Tk):
                     arquivos_copiados += 1
                     self._log(f"COPIADO: {nome_arquivo} ({tamanho} bytes)")
 
-                # Atualiza Treeview com cores
                 tag = "duplicado" if duplicado else "copiado"
                 status = "DUPLICADO" if duplicado else "COPIADO"
                 self.tree.insert("", "end", values=(nome_arquivo, tamanho, status), tags=(tag,))
-
-                # Atualiza progresso
                 processados += 1
                 self._update_progress(processados)
 
-            # Estatísticas extras
-            tamanhos_unicos = [len(lista) for lista in tabela.vetor if lista]
-            if tamanhos_unicos:
-                maior_arquivo = max(tamanhos_unicos)
-                menor_arquivo = min(tamanhos_unicos)
-                self._log(f"Maior arquivo único copiado: {maior_arquivo} bytes")
-                self._log(f"Menor arquivo único copiado: {menor_arquivo} bytes")
+            # Estatísticas
+            end_time = time.time()
+            duracao_total = end_time - start_time
+            tempo_medio_comparacao = duracao_total / max(comparacoes, 1)
 
-            mesmo_tamanho_diferentes = sum(len(lista) - 1 for lista in tabela.vetor if len(lista) > 1)
-            self._log(f"Arquivos com mesmo tamanho mas conteúdo diferente: {mesmo_tamanho_diferentes}")
+            tamanhos_unicos = [len(t[1]) for t in tabela.lista if t]
+            mesmo_tamanho_diferentes = sum(1 for t in tabela.lista)  # simplificado
 
-            self._log("=" * 60)
+            self._log("="*60)
             self._log("RESULTADO:")
             self._log(f"Total de arquivos encontrados: {total_arquivos}")
             self._log(f"Arquivos únicos copiados: {arquivos_copiados}")
             self._log(f"Arquivos duplicados: {duplicatas}")
             self._log(f"Pasta destino: {dir_destino}")
-            indices_ocupados = sum(1 for lista in tabela.vetor if lista)
-            self._log(f"\nEstatísticas da Tabela Hash:")
-            self._log(f"Tamanho do vetor: {tabela.tamanho}")
-            self._log(f"Índices ocupados: {indices_ocupados}/{tabela.tamanho}")
 
-            # Estatísticas de desempenho
-            end_time = time.time()
-            duracao_total = end_time - start_time
-            tempo_medio = duracao_total / max(total_arquivos, 1)
-            tempo_medio_comparacao = duracao_total / max(comparacoes, 1)
-            self._log("\nDESEMPENHO:")
             self._log(f"Número total de comparações de arquivos: {comparacoes}")
             self._log(f"Tempo total: {duracao_total:.4f} segundos")
             self._log(f"Tempo médio por comparação: {tempo_medio_comparacao:.6f} segundos")
@@ -307,11 +260,11 @@ class App(tk.Tk):
         except KeyboardInterrupt:
             self._log("\nProcesso interrompido pelo usuário.")
         finally:
-            # Finaliza UI
             self.btn_start.config(state="normal")
             self.btn_stop.config(state="disabled")
             self.worker_thread = None
 
+    # ---------------------- Auxiliares ----------------------
     def _contar_arquivos(self, raiz):
         total = 0
         for _, _, arquivos in os.walk(raiz):
@@ -323,7 +276,6 @@ class App(tk.Tk):
         self.lbl_prog.config(text=f"{processados} / {self.total_arquivos} arquivos processados")
 
     def _log(self, msg):
-        # Enfileira mensagens para thread principal atualizar o Text
         self.log_queue.put(str(msg))
 
     def _poll_log_queue(self):
@@ -333,7 +285,6 @@ class App(tk.Tk):
                 self._append_text(msg + "\n")
         except queue.Empty:
             pass
-        # checa a fila a cada 100ms
         self.after(100, self._poll_log_queue)
 
     def _append_text(self, text):
