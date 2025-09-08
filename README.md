@@ -32,7 +32,7 @@ Dessa forma, apenas arquivos realmente únicos permanecem no diretório de desti
 - Mantém uma **lista simples** de arquivos já processados.  
 - Cada novo arquivo é comparado **um a um** com os anteriores.  
 
-### Busca Binária por Tamanho ([BINARIA.py](BINARIA.py))  
+#### Busca Binária por Tamanho ([BINARIA.py](BINARIA.py))  
 - Utiliza uma **árvore binária de busca (BST)**, onde cada nó representa um tamanho de arquivo.  
 - Arquivos são inseridos de acordo com seu tamanho.  
 - A busca por tamanhos iguais é mais rápida que na lista sequencial, pois a árvore permite **descartar partes irrelevantes**.  
