@@ -6,8 +6,8 @@ import queue
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-PRIMO = 104729          
-CHUNK = 1024 * 1024  
+PRIMO = 104729          # tamanho da tabela (primo)
+CHUNK = 1024 * 1024     # 1MB por leitura (comparação de conteúdo)
 
 def comparar_arquivos(arquivo1, arquivo2):
     try:
@@ -25,19 +25,28 @@ def comparar_arquivos(arquivo1, arquivo2):
         return False
 
 class TabelaHash:
-
     def __init__(self, m=PRIMO):
         self.m = m
         self.vetor = [dict() for _ in range(m)]
+        # Contadores mínimos
+        self.comparacoes_tamanho_busca_total = 0   # 1 por arquivo ao consultar o bucket/ chave (tamanho)
+        self.chaves_ocupadas = 0                  # tamanhos distintos inseridos (disponibilidade/ocupação)
 
     def _idx(self, tamanho):
         return tamanho % self.m
 
     def inserir(self, tamanho, caminho):
         b = self.vetor[self._idx(tamanho)]
-        b.setdefault(tamanho, []).append(caminho)
+        # Se for um tamanho novo neste bucket, conta como nova "chave" ocupada
+        if tamanho not in b:
+            self.chaves_ocupadas += 1
+            b[tamanho] = [caminho]
+        else:
+            b[tamanho].append(caminho)
 
     def buscar_mesmo_tamanho(self, tamanho):
+        # Análogo à comparação de "tamanho": contamos 1 por arquivo.
+        self.comparacoes_tamanho_busca_total += 1
         b = self.vetor[self._idx(tamanho)]
         return b.get(tamanho, [])
 
@@ -48,7 +57,6 @@ class App(tk.Tk):
         self.geometry("820x560")
         self.minsize(820, 560)
 
-
         self.dir_origem = tk.StringVar()
         self.dir_destino = tk.StringVar()
         self.worker_thread = None
@@ -58,7 +66,6 @@ class App(tk.Tk):
 
         self._build_ui()
         self._poll_log_queue()
-
 
     def _ui(self, fn, *args, **kwargs):
         self.after(0, lambda: fn(*args, **kwargs))
@@ -72,7 +79,6 @@ class App(tk.Tk):
     def _btn_states(self, start_state, stop_state):
         self._ui(self.btn_start.config, state=start_state)
         self._ui(self.btn_stop.config, state=stop_state)
-
 
     def _build_ui(self):
         pad = {"padx": 8, "pady": 6}
@@ -114,7 +120,6 @@ class App(tk.Tk):
 
         ttk.Label(self, text="Dica: escolha uma pasta de origem com muitos arquivos e uma de destino vazia.").pack(fill="x", padx=8, pady=(0, 10))
 
-
     def _escolher_origem(self):
         caminho = filedialog.askdirectory(title="Selecione a pasta de origem")
         if caminho: self.dir_origem.set(caminho)
@@ -122,7 +127,6 @@ class App(tk.Tk):
     def _escolher_destino(self):
         caminho = filedialog.askdirectory(title="Selecione a pasta de destino")
         if caminho: self.dir_destino.set(caminho)
-
 
     def _iniciar(self):
         origem = self.dir_origem.get().strip()
@@ -172,16 +176,20 @@ class App(tk.Tk):
             except Exception as e:
                 messagebox.showerror("Erro", f"Não foi possível salvar o log:\n{e}")
 
-
     def _deduplicar_worker(self, dir_origem, dir_destino):
         tabela = TabelaHash(m=PRIMO)
+
         total_arquivos = 0
         arquivos_copiados = 0
         duplicatas = 0
         processados = 0
-        comparacoes = 0
-        conflitos_nome = 0
+
+        comparacoes_byte = 0  # comparações de conteúdo (byte-a-byte)
         start_time = time.time()
+
+        # Loga disponibilidade inicial (0 ocupadas)
+        self._log(f"Disponibilidade do hash: chaves ocupadas = {tabela.chaves_ocupadas} / {tabela.m} "
+                  f"({tabela.chaves_ocupadas / tabela.m:.4f} de fator de carga)")
 
         try:
             for pasta_atual, _, arquivos in os.walk(dir_origem):
@@ -198,10 +206,12 @@ class App(tk.Tk):
                     total_arquivos += 1
                     duplicado = False
 
+                    # Busca no hash: conta UMA comparação de tamanho por arquivo
                     candidatos = tabela.buscar_mesmo_tamanho(tamanho)
+
                     if candidatos:
                         for candidato in candidatos:
-                            comparacoes += 1
+                            comparacoes_byte += 1
                             if comparar_arquivos(caminho_completo, candidato):
                                 self._log(f"ARQUIVO DUPLICADO: {nome_arquivo} (igual a {os.path.basename(candidato)})")
                                 duplicatas += 1
@@ -215,7 +225,6 @@ class App(tk.Tk):
                             base, ext = os.path.splitext(nome_arquivo)
                             destino_final = os.path.join(dir_destino, f"{base}_{contador}{ext}")
                             contador += 1
-                        conflitos_nome += (contador - 1)
 
                         try:
                             shutil.copy2(caminho_completo, destino_final)
@@ -224,36 +233,45 @@ class App(tk.Tk):
                         else:
                             tabela.inserir(tamanho, destino_final)
                             arquivos_copiados += 1
+                            # opcional: remover log de cópia para reduzir ruído
                             self._log(f"COPIADO: {nome_arquivo} ({tamanho} bytes)")
 
                     processados += 1
                     if (processados % 25 == 0) or (processados == self.total_arquivos):
                         self._set_progress(processados, self.total_arquivos)
 
+            duracao_total = time.time() - start_time
 
-            end_time = time.time()
-            duracao_total = end_time - start_time
-            tempo_medio_comparacao = duracao_total / max(comparacoes, 1)
+
+            media_tamanho_por_arquivo = tabela.comparacoes_tamanho_busca_total / max(total_arquivos, 1)
+            media_byte_por_arquivo = comparacoes_byte / max(total_arquivos, 1)
+
+
+            fator_carga = tabela.chaves_ocupadas / tabela.m
 
             self._log("=" * 60)
             self._log("RESULTADO:")
             self._log(f"Total de arquivos encontrados: {total_arquivos}")
             self._log(f"Arquivos únicos copiados: {arquivos_copiados}")
             self._log(f"Arquivos duplicados: {duplicatas}")
-            self._log(f"Conflitos de nome (renomeações): {conflitos_nome}")
             self._log(f"Pasta destino: {dir_destino}")
-            self._log("") 
+            self._log("")
+            self._log("DISPONIBILIDADE DO HASH:")
+            self._log(f"Chaves ocupadas (tamanhos distintos): {tabela.chaves_ocupadas} / {tabela.m} "
+                      f"({fator_carga:.4f} de fator de carga)")
+            self._log("")
             self._log("DESEMPENHO:")
-            self._log(f"Número total de comparações byte a byte: {comparacoes}")
+            self._log(f"Comparações de TAMANHO (busca hash) - total: {tabela.comparacoes_tamanho_busca_total}")
+            self._log(f"Média de comparações de TAMANHO por arquivo: {media_tamanho_por_arquivo:.2f}")
+            self._log(f"Comparações de conteúdo (byte-a-byte) - total: {media_byte_por_arquivo * total_arquivos:.0f}")
+            self._log(f"Média de comparações de conteúdo por arquivo: {media_byte_por_arquivo:.2f}")
             self._log(f"Tempo total: {duracao_total:.4f} s")
-            self._log(f"Tempo médio por comparação: {tempo_medio_comparacao:.6f} s")
 
         except Exception as e:
             self._log(f"[ERRO] {type(e).__name__}: {e}")
         finally:
             self._btn_states("normal", "disabled")
             self.worker_thread = None
-
 
     def _contar_arquivos(self, raiz):
         return sum(len(arquivos) for _, _, arquivos in os.walk(raiz))
@@ -280,7 +298,6 @@ class App(tk.Tk):
         self.txt_log.configure(state="normal")
         self.txt_log.delete("1.0", "end")
         self.txt_log.configure(state="disabled")
-
 
 if __name__ == "__main__":
     App().mainloop()

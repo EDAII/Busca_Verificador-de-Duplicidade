@@ -143,13 +143,19 @@ class App(tk.Tk):
                 messagebox.showerror("Erro", f"Não foi possível salvar o log:\n{e}")
 
     def _deduplicar_worker(self, dir_origem, dir_destino):
-        arquivos_processados = []
+        arquivos_processados = []  # lista de tuplas: (tamanho, caminho_no_destino)
 
         total_arquivos = 0
         arquivos_copiados = 0
         duplicatas = 0
         processados = 0
-        comparacoes = 0
+
+        comparacoes_tamanho_total = 0       # toda comparação de tamanho com a fila
+        comparacoes_conteudo_total = 0      # cada comparação byte-a-byte (quando tamanhos iguais)
+
+        # Se True, compara conteúdo com TODOS os de mesmo tamanho (lento, só para estatística)
+        comparar_todos = False
+
         start_time = time.time()
 
         try:
@@ -167,14 +173,40 @@ class App(tk.Tk):
                     total_arquivos += 1
                     duplicado = False
 
+                    # contador por arquivo (quantas comparações de TAMANHO ele fez com a fila toda)
+                    comparacoes_tamanho_arquivo = 0
+                    comparacoes_conteudo_arquivo = 0
+
                     for tam_existente, arq_existente in arquivos_processados:
+                        # sempre contar a interação de TAMANHO (varre a fila inteira)
+                        comparacoes_tamanho_total += 1
+                        comparacoes_tamanho_arquivo += 1
+
+                        # Se o tamanho for igual, podemos (condicionalmente) comparar conteúdo
                         if tam_existente == tamanho_atual:
-                            comparacoes += 1
+                            # se já achou duplicado e não queremos comparar todos, pule o byte-a-byte
+                            if duplicado and not comparar_todos:
+                                continue
+
+                            comparacoes_conteudo_total += 1
+                            comparacoes_conteudo_arquivo += 1
+
                             if comparar_arquivos(caminho_completo, arq_existente):
-                                self._log(f"ARQUIVO DUPLICADO: {nome_arquivo} (igual a {os.path.basename(arq_existente)})")
+                                self._log(
+                                    f"ARQUIVO DUPLICADO: {nome_arquivo} "
+                                    f"(igual a {os.path.basename(arq_existente)})"
+                                )
                                 duplicatas += 1
                                 duplicado = True
-                                break
+                                # não damos break para garantir que o contador de tamanho percorra a fila inteira
+                                if not comparar_todos:
+                                    # continua o loop apenas contando tamanhos; não fará mais byte-a-byte
+                                    continue
+
+                    self._log(
+                        f"[{nome_arquivo}] Interações de tamanho: {comparacoes_tamanho_arquivo} | "
+                        f"Comparações de conteúdo (byte-a-byte): {comparacoes_conteudo_arquivo}"
+                    )
 
                     if not duplicado:
                         destino_final = os.path.join(dir_destino, nome_arquivo)
@@ -183,6 +215,7 @@ class App(tk.Tk):
                             nome, ext = os.path.splitext(nome_arquivo)
                             destino_final = os.path.join(dir_destino, f"{nome}_{contador}{ext}")
                             contador += 1
+
                         shutil.copy2(caminho_completo, destino_final)
                         arquivos_processados.append((tamanho_atual, destino_final))
                         arquivos_copiados += 1
@@ -193,7 +226,8 @@ class App(tk.Tk):
 
             end_time = time.time()
             duracao_total = end_time - start_time
-            tempo_medio_comparacao = duracao_total / max(comparacoes, 1)
+            media_tamanho_por_arquivo = comparacoes_tamanho_total / max(total_arquivos, 1)
+            media_conteudo_por_arquivo = comparacoes_conteudo_total / max(total_arquivos, 1)
 
             self._log("=" * 60)
             self._log("RESULTADO:")
@@ -203,9 +237,11 @@ class App(tk.Tk):
             self._log(f"Pasta destino: {dir_destino}")
             self._log("")
             self._log("DESEMPENHO:")
-            self._log(f"Número total de comparações byte-a-byte: {comparacoes}")
+            self._log(f"Comparações de tamanho (totais): {comparacoes_tamanho_total}")
+            self._log(f"Comparações de conteúdo (byte-a-byte, totais): {comparacoes_conteudo_total}")
+            self._log(f"Média de comparações de tamanho por arquivo: {media_tamanho_por_arquivo:.2f}")
+            self._log(f"Média de comparações de conteúdo por arquivo: {media_conteudo_por_arquivo:.2f}")
             self._log(f"Tempo total: {duracao_total:.4f} segundos")
-            self._log(f"Tempo médio por comparação: {tempo_medio_comparacao:.6f} segundos")
 
         except KeyboardInterrupt:
             self._log("\nProcesso interrompido pelo usuário.")

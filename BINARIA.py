@@ -16,8 +16,11 @@ class _NoBST:
 class ArvoreBinariaPorTamanho:
     def __init__(self):
         self.raiz = None
+        # ÚNICO contador de estrutura: número de comparações de tamanho feitas nas BUSCAS
+        self.comparacoes_tamanho_busca_total = 0
 
     def inserir(self, tamanho, caminho):
+        # Inserção sem instrumentação extra para não afetar performance
         if self.raiz is None:
             self.raiz = _NoBST(tamanho)
             self.raiz.caminhos.append(caminho)
@@ -42,8 +45,10 @@ class ArvoreBinariaPorTamanho:
                 atual = atual.dir
 
     def buscar_por_tamanho(self, tamanho):
+        # Incrementa o contador a cada comparação de tamanho (visita de nó)
         atual = self.raiz
         while atual is not None:
+            self.comparacoes_tamanho_busca_total += 1
             if tamanho == atual.tamanho:
                 return list(atual.caminhos)
             elif tamanho < atual.tamanho:
@@ -72,7 +77,7 @@ def comparar_arquivos(arquivo1, arquivo2):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Verificador de duplicidade com busca binária")
+        self.title("Verificador de duplicidade com busca binária (BST)")
         self.geometry("820x560")
         self.minsize(820, 560)
 
@@ -87,11 +92,9 @@ class App(tk.Tk):
         self._build_ui()
         self._poll_log_queue()
 
-
     def _ui(self, fn, *args, **kwargs):
         self.after(0, lambda: fn(*args, **kwargs))
 
-  
     def _build_ui(self):
         pad = {"padx": 8, "pady": 6}
 
@@ -133,7 +136,6 @@ class App(tk.Tk):
 
         ttk.Label(self, text="Dica: escolha uma pasta de origem com muitos arquivos e uma de destino vazia.").pack(fill="x", padx=8, pady=(0, 10))
 
-
     def _escolher_origem(self):
         caminho = filedialog.askdirectory(title="Selecione a pasta de origem")
         if caminho: self.dir_origem.set(caminho)
@@ -142,7 +144,6 @@ class App(tk.Tk):
         caminho = filedialog.askdirectory(title="Selecione a pasta de destino")
         if caminho: self.dir_destino.set(caminho)
 
-  
     def _iniciar(self):
         origem = self.dir_origem.get().strip()
         destino = self.dir_destino.get().strip()
@@ -194,14 +195,15 @@ class App(tk.Tk):
             except Exception as e:
                 messagebox.showerror("Erro", f"Não foi possível salvar o log:\n{e}")
 
-
     def _deduplicar_worker(self, dir_origem, dir_destino):
         arvore = ArvoreBinariaPorTamanho()
         total_arquivos = 0
         arquivos_copiados = 0
         duplicatas = 0
         processados = 0
-        comparacoes = 0
+
+        # Mantidos mínimos para não afetar desempenho
+        comparacoes_conteudo_total = 0
         start_time = time.time()
 
         try:
@@ -220,9 +222,11 @@ class App(tk.Tk):
                     duplicado = False
 
                     existentes = arvore.buscar_por_tamanho(tamanho)
+
                     if existentes:
                         for arquivo_existente in existentes:
-                            comparacoes += 1
+                            # Comparação byte-a-byte só entre candidatos de mesmo tamanho
+                            comparacoes_conteudo_total += 1
                             if comparar_arquivos(caminho_completo, arquivo_existente):
                                 self._log(f"ARQUIVO DUPLICADO: {nome_arquivo} (igual a {os.path.basename(arquivo_existente)})")
                                 duplicatas += 1
@@ -245,11 +249,13 @@ class App(tk.Tk):
                     processados += 1
                     self._ui(self._update_progress, processados)
 
-            end_time = time.time()
-            duracao_total = end_time - start_time
-            tempo_medio_comparacao = duracao_total / max(comparacoes, 1)
+            duracao_total = time.time() - start_time
 
-            self._log("="*60)
+            # --- MÉDIAS solicitadas (sem overhead adicional) ---
+            media_tamanho_por_arquivo = arvore.comparacoes_tamanho_busca_total / max(total_arquivos, 1)
+            media_conteudo_por_arquivo = comparacoes_conteudo_total / max(total_arquivos, 1)
+
+            self._log("=" * 60)
             self._log("RESULTADO:")
             self._log(f"Total de arquivos encontrados: {total_arquivos}")
             self._log(f"Arquivos únicos copiados: {arquivos_copiados}")
@@ -257,9 +263,11 @@ class App(tk.Tk):
             self._log(f"Pasta destino: {dir_destino}")
             self._log("")
             self._log("DESEMPENHO:")
-            self._log(f"Número total de comparações de arquivos: {comparacoes}")
+            self._log(f"Comparações de TAMANHO (busca BST) - total: {arvore.comparacoes_tamanho_busca_total}")
+            self._log(f"Média de comparações de TAMANHO por arquivo: {media_tamanho_por_arquivo:.2f}")
+            self._log(f"Comparações de conteúdo (byte-a-byte) - total: {comparacoes_conteudo_total}")
+            self._log(f"Média de comparações de conteúdo por arquivo: {media_conteudo_por_arquivo:.2f}")
             self._log(f"Tempo total: {duracao_total:.4f} segundos")
-            self._log(f"Tempo médio por comparação: {tempo_medio_comparacao:.6f} segundos")
 
         except KeyboardInterrupt:
             self._log("\nProcesso interrompido pelo usuário.")
@@ -267,7 +275,6 @@ class App(tk.Tk):
             self._ui(self.btn_start.config, state="normal")
             self._ui(self.btn_stop.config, state="disabled")
             self.worker_thread = None
-
 
     def _contar_arquivos(self, raiz):
         total = 0
