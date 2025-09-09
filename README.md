@@ -77,6 +77,12 @@ O sistema foi desenvolvido para garantir a integridade e evitar duplicidade nos 
 - Para cenários médios, a **busca binária** é um bom equilíbrio.  
 - Para grandes volumes de dados, a **tabela hash** é a solução mais adequada.  
 
+## Gravação 
+
+
+<iframe width="560" height="315" src="https://www.youtube.com/embed/SvSuG8IaGgk?si=965s3V5MLBiXHkH6" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
+
 
 | Método        | Estrutura usada | Vantagem | Desvantagem |
 |---------------|----------------|----------|-------------|
